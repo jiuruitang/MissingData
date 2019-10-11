@@ -19,13 +19,13 @@ pi <- pnorm(alpha0 + alpha1*Y)
 X <- rbinom(500,1,prob = pi)
 
 # sample weight from lognormal
-Z <- rlnorm(500, meanlog = 0, sdlog = 1)
+Z <- rnorm(500, mean = 5, sd = 1)
 pi_survey <- Z*n/sum(Z) # prob of selection i-th unit
 pi_survey <- ifelse(pi_survey > 1, 1,pi_survey) # make prob equals 1 if greater than 1
 W <- 1/pi_survey # weight is one over prob
 
 # auxiliary information
-sum(W*X) # 817
+sum(W*X) 
 
 # generate missing pattern
 gamma0 <- -0.4
