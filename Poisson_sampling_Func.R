@@ -197,8 +197,8 @@ alpha_10 <- matrix(NA,10,2)
 gamma_10 <- matrix(NA,10,3)
 total_10 <- rep(NA,10)
 acceptRatio_10 <- rep(NA,10)
+pop_dat_Poisson <- gen_pop_Poisson()
 for(i in 1:10){
-  pop_dat_Poisson <- gen_pop_Poisson()
   sampleTotal <- replicate(200,getSampleStatsPoisson())
   pop_sd_HT <- sd(sampleTotal)
   pop_mean_HT <- mean(sampleTotal)
@@ -212,9 +212,11 @@ for(i in 1:10){
   alpha_10[i,] <- colMeans(resultList$alpha)
   gamma_10[i,] <- colMeans(resultList$gamma)
   total_10[i] <- mean(resultList$pop_total)
-  acceptRatio_10 <- testList$acceptRatio
+  acceptRatio_10[i] <- testList$acceptRatio
 }
 colMeans(alpha_10)
+apply(alpha_10,2,sd)/sqrt(10)
 colMeans(gamma_10)
+apply(gamma_10,2,sd)/sqrt(10)
 mean(total_10)
 mean(acceptRatio_10)
