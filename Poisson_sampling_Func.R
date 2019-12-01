@@ -1,10 +1,10 @@
 gen_pop_Poisson <- function(N=50000,N1=35000, N2= 15000,alpha = c(0.3,-0.5),gamma = c(-0.25,0.1,-1.1),beta=c(0.5,-0.15)){
-  pbeta <- rbeta(N,2,5) 
-  W <- 1/pbeta
+  pi <- rbeta(N,2,5) 
+  W <- 1/pi
   Y <- W
   
   # generate Y give weights, have some pi_Y very close to 0
-  pi_Y <- pnorm(model.matrix(Y~W)%*%beta)
+  pi_Y <- pnorm(model.matrix(Y~pbeta)%*%beta)
   Y <- rbinom(N,1,p=pi_Y)
   
   # generate X1 given Y
@@ -18,18 +18,18 @@ gen_pop_Poisson <- function(N=50000,N1=35000, N2= 15000,alpha = c(0.3,-0.5),gamm
   Rx <- rbinom(N,1,p = pi_Rx)
   
   # get a dataframe for population
-  return(as.data.frame(cbind(Y,X1,Rx,W,pbeta)))
+  return(as.data.frame(cbind(Y,X1,Rx,W,pi)))
 }
 
 pop_dat_Poisson <- gen_pop_Poisson()
 getSample_Poisson <- function(population = pop_dat_Poisson,n=5000,N=50000){
-  getSampled <- rbinom(N,1,pop_dat_Poisson$pbeta)
+  getSampled <- rbinom(N,1,pop_dat_Poisson$pi)
   sub_dat <- pop_dat_Poisson[getSampled==1,]
   return(sub_dat)
 }
 
 getSampleStatsPoisson <- function(population = pop_dat_Poisson,N=50000){
-  getSampled <- rbinom(N,1,pop_dat_Poisson$pbeta)
+  getSampled <- rbinom(N,1,pop_dat_Poisson$pi)
   sub_dat <- pop_dat_Poisson[getSampled==1,]
   return(sum(sub_dat$X1*sub_dat$W))
 }
@@ -219,4 +219,9 @@ apply(alpha_10,2,sd)/sqrt(10)
 colMeans(gamma_10)
 apply(gamma_10,2,sd)/sqrt(10)
 mean(total_10)
+sd(total_10)/sqrt(10)
+sum(pop_dat_Poisson$X1) # truth
 mean(acceptRatio_10)
+
+boxplot(log(W)~Y,data = pop_dat_Poisson)
+pop_dat_Poisson %>% group_by(X1) %>% summarise_at(vars(W), list(~mean(., na.rm=TRUE)))

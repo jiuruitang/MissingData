@@ -487,7 +487,7 @@ doGibbs4<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = alpha_s,
 }
 testList <- doGibbs4()
 
-getResults <- function(dataMI, n1 = 1500, n2 = 3500,sub_dat){
+getResultsStrata <- function(dataMI, n1 = 1500, n2 = 3500,sub_dat){
   n <- dim(dataMI)[1]
   ans <- matrix(NA,n,3)
   for (i in 1:n){
