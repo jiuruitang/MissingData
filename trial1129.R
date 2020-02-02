@@ -1,3 +1,5 @@
+## Tried to calculate variance with HT formula
+
 source("allFunc.R")
 pop_dat <- gen_pop()
 sampleTotal <- replicate(200,getSampleStats(population = pop_dat))

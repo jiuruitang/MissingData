@@ -104,6 +104,8 @@ mean(resultList1$pop_total)
 colMeans(resultList1$alpha)
 colMeans(resultList1$gamma)
 
+pop_dat <- gen_pop()
+
 alpha_MAR <- matrix(NA,10,3)
 gamma_MAR <- matrix(NA,10,4)
 total_MAR <- rep(NA,10)

@@ -54,10 +54,10 @@ gamma_10 <- matrix(NA,10,4)
 total_10 <- rep(NA,10)
 acceptRatio_10 <- rep(NA,10)
 for(i in 1:10){
-  sub_dat <- getSample_Poisson(population = pop_dat)
-  alpha_s <- rnorm(3)
+  sub_dat <- getSample(population = pop_dat)
+  alpha_s <- rnorm(4)
   gamma_s <- rnorm(4)
-  testList <- doGibbsGoodStart()
+  testList <- doGibbsANWeight()
   
   resultList <- getResults(dataMI = testList$MI_data, n1 = 1500, n2 = 3500,sub_dat)
   alpha_10[i,] <- colMeans(resultList$alpha)

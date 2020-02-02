@@ -4,7 +4,7 @@ gen_pop_Poisson <- function(N=50000,N1=35000, N2= 15000,alpha = c(0.3,-0.5),gamm
   Y <- W
   
   # generate Y give weights, have some pi_Y very close to 0
-  pi_Y <- pnorm(model.matrix(Y~pbeta)%*%beta)
+  pi_Y <- pnorm(model.matrix(Y~pi)%*%beta)
   Y <- rbinom(N,1,p=pi_Y)
   
   # generate X1 given Y
@@ -16,6 +16,42 @@ gen_pop_Poisson <- function(N=50000,N1=35000, N2= 15000,alpha = c(0.3,-0.5),gamm
   Rx <- X1
   pi_Rx <- pnorm(model.matrix(Rx~Y+X1)%*%gamma)
   Rx <- rbinom(N,1,p = pi_Rx)
+  
+  # get a dataframe for population
+  return(as.data.frame(cbind(Y,X1,Rx,W,pi)))
+}
+
+gen_pop_PPS <- function(N=50000,alpha = c(0.5,-0.5,-1),gamma = c(-0.6,0.1,0.3,-1.1),beta= c(2,-1,0.8),theta = c(0.1,0.45,0.45)){
+  alpha0 <- alpha[1]
+  alpha12 <- alpha[2]
+  alpha13 <- alpha[3]
+  gamma0 <- gamma[1]
+  gamma12 <- gamma[2]
+  gamma13 <- gamma[3]
+  gamma2 <- gamma[4]
+  beta12 <- beta[1]
+  beta13 <- beta[2]
+  beta2 <- beta[3]
+  
+  # generate Y
+  Y <- sample(c(1,2,3),N,replace = TRUE, prob = theta)
+  # Y[1:N1] <- sample(c(1,2,3),N1,replace = TRUE, prob = theta1)
+  # Y[(N1+1):N] <- sample(c(1,2,3),N2,replace = TRUE, prob = theta2)
+  
+  # generate X1 given Y
+  pi_x1 <- pnorm(alpha0 + alpha12*(Y == 2) + alpha13*(Y==3)) # pnorm is CDF or normal
+  X1 <- rbinom(N,1,p=pi_x1)
+  
+  # sample Rx|X,Y
+  pi_Rx <- pnorm(gamma0 + gamma12*(Y == 2) + gamma13*(Y==3) + gamma2*X1)
+  Rx <- rbinom(N,1,p = pi_Rx)
+  
+  # generate Z|X,Y, use this variable for weight
+  Z <- rnorm(1,-2.5,1) + beta12*(Y==2) + beta13*(Y==3) + beta2*X1
+  
+  # generate inclusion probability
+  pi <- pnorm(Z)
+  W <- 1/pi
   
   # get a dataframe for population
   return(as.data.frame(cbind(Y,X1,Rx,W,pi)))
@@ -585,7 +621,7 @@ doGibbsMarWeight<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = 
   
   X1_accepted = 0
   
-  GAMMA <- matrix(NA,niter-burnin,length(alpha))
+  GAMMA <- matrix(NA,niter-burnin,length(gamma))
   ALPHA <- matrix(NA,niter-burnin,length(alpha))
   X1_impute <- matrix(NA,niter-burnin,length(sub_dat$X1))
   
@@ -605,7 +641,7 @@ doGibbsMarWeight<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = 
     Z <- Z_mean + qnorm(U_X1)
     
     # update alpha|Z,Y
-    Y_mat <- model.matrix(X1~as.factor(Y+S))
+    Y_mat <- model.matrix(X1~as.factor(Y)+S)
     sigma_hat <- solve(solve(sigma0_alpha) + t(Y_mat)%*%Y_mat)
     alpha_hat <- sigma_hat%*%(t(Y_mat)%*%Z + solve(sigma0_alpha)%*%b0_alpha)
     alpha <- rmvnorm(1, mean = alpha_hat, sigma = sigma_hat)
@@ -662,11 +698,326 @@ doGibbsMarWeight<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = 
   return(list(gamma = GAMMA,alpha = ALPHA,MI_data = XL, acceptRatio = X1_accepted/niter))
 }
 
-getResults <- function(dataMI, n1 = 1500, n2 = 3500,sub_dat){
+doGibbsMarWeightPoisson<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = alpha_s, gamma = gamma_s, pop_mean = pop_mean_HT, pop_sd = pop_sd_HT){
+  X1 <- sub_dat$X1
+  W <- sub_dat$W
+  Rx <- sub_dat$Rx
+  Y <- sub_dat$Y
+  pbeta <- 1/sub_dat$W
+  n_mis <- sum(sub_dat$Rx == 1)
+  m_X1 <- glm(X1~Y,data = sub_dat[which(Rx ==0),],family=binomial(probit))
+  p_X1 <- predict(m_X1,newdata = data.frame(Y=Y[which(Rx == 1)]),type = "response")
+  X1[which(Rx == 1)] <- rbinom(n_mis,1,prob = p_X1)
+  
+  b0_alpha <- alpha; b0_alpha[] <- 0
+  sigma0_alpha <- diag(alpha); diag(sigma0_alpha) <- 1
+  b0_gamma <- gamma; b0_gamma[] <- 0
+  sigma0_gamma <- diag(gamma); diag(sigma0_gamma) <- 1
+  
+  alpha <- t(alpha_s)
+  gamma <- t(gamma_s)
+  
+  X1_accepted = 0
+  
+  GAMMA <- matrix(NA,niter-burnin,length(gamma))
+  ALPHA <- matrix(NA,niter-burnin,length(alpha))
+  X1_impute <- matrix(NA,niter-burnin,length(sub_dat$X1))
+  
+  # prior on thetat
+  theta0 <- c(1,1,1)
+  
+  for (i in 1:niter){
+    # update alpha, with data augumentation
+    # update Z|X,alpha
+    Y_mat <- model.matrix(X1~as.factor(Y)+pbeta)
+    Z <- X1
+    #Z_mean <- alpha[1] + alpha[2]*(Y==2) + alpha[3]*(Y==3) + alpha[4]*(1/W)
+    Z_mean <- Y_mat%*%t(alpha)
+    Z_mean_n <- Z_mean[which(X1==0)]
+    Z_mean_p <- Z_mean[which(X1==1)]
+    U_X1 <- Z_mean; U_X1[] <- 0
+    U_X1[X1==0] <- runif(sum(X1==0),pnorm(-Inf-Z_mean_n),pnorm(0-Z_mean_n))
+    U_X1[X1==1] <- runif(sum(X1==1),pnorm(0-Z_mean_p),pnorm(Inf-Z_mean_p))
+    Z <- Z_mean + qnorm(U_X1)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_alpha) + t(Y_mat)%*%Y_mat)
+    alpha_hat <- sigma_hat%*%(t(Y_mat)%*%Z + solve(sigma0_alpha)%*%b0_alpha)
+    alpha <- rmvnorm(1, mean = alpha_hat, sigma = sigma_hat)
+    
+    # update gamma
+    # update G|Rx, gamma
+    YX_mat <- model.matrix(Rx~as.factor(Y)+X1)
+    G <- Rx
+    # G_mean <- gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3)
+    G_mean <- YX_mat%*%t(gamma)
+    G_mean_n <- G_mean[which(Rx==0)]
+    G_mean_p <- G_mean[which(Rx==1)]
+    U_Z <- G_mean; U_Z[] <- 0
+    U_Z[Rx==0] <- runif(sum(Rx==0),pnorm(-Inf-G_mean_n),pnorm(0-G_mean_n))
+    U_Z[Rx==1] <- runif(sum(Rx==1),pnorm(0-G_mean_p),pnorm(Inf-G_mean_p))
+    G <- G_mean + qnorm(U_Z)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_gamma) + t(YX_mat)%*%YX_mat)
+    gamma_hat <- sigma_hat%*%(t(YX_mat)%*%G + solve(sigma0_gamma)%*%b0_gamma)
+    gamma <- rmvnorm(1, mean = gamma_hat, sigma = sigma_hat)
+    
+    # for Rx = 1, sample X1_mis*
+    pr_X1_miss <- matrix(0,ncol=2,nrow=n_mis)
+    colnames(pr_X1_miss) <- c("0","1")
+    # pi_x1 <- pnorm(0,alpha[1] + alpha[2]*(Y == 2) + alpha[3]*(Y==3),1) 
+    pi_x1 <- pnorm(0,Y_mat %*% t(alpha),1) 
+    YX_matX0 <-  YX_matX1 <- YX_mat
+    YX_matX0[,"X1"] <- rep(0,dim(YX_mat)[1])
+    YX_matX1[,"X1"] <- rep(1,dim(YX_mat)[1])
+    #pi_Rx_temp0 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3),1)
+    #pi_Rx_temp1 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3) + gamma[4],1)
+    pi_Rx_temp0 <- dnorm(G,YX_matX0%*%t(gamma),1)
+    pi_Rx_temp1<- dnorm(G,YX_matX1%*%t(gamma),1)
+    pr_X1_miss[,"0"] <- (pi_Rx_temp0*pi_x1)[which(Rx==1)]
+    pr_X1_miss[,"1"] <- (pi_Rx_temp1*(1-pi_x1))[which(Rx==1)]
+    pr_X1_miss <- pr_X1_miss/matrix(rowSums(pr_X1_miss),ncol=2,nrow=n_mis)
+    Ran_unif_X1_miss <- runif(nrow(pr_X1_miss))
+    cumul_X1_miss <- pr_X1_miss%*%upper.tri(diag(ncol(pr_X1_miss)),diag=TRUE)
+    
+    proposed_X1 <- X1
+    proposed_X1[which(Rx==1)] <- rowSums(Ran_unif_X1_miss>cumul_X1_miss)
+    
+    # M-H step
+    # cur_mean <- sum(X1*W)
+    # proposed_mean <- sum(proposed_X1*W)
+    # log.r1 = dnorm(proposed_mean,mean = pop_mean,sd = pop_sd,log = TRUE) -  dnorm(cur_mean,mean = pop_mean,sd = pop_sd, log = TRUE)
+    # if(log(runif(1))< log.r1){
+    #  X1 <- proposed_X1
+    #  X1_accepted = X1_accepted + 1
+    # }
+    
+    
+    if (i > burnin){
+      GAMMA[i-burnin,] <- gamma
+      ALPHA[i-burnin,] <- alpha
+      X1_impute[i-burnin,] <- X1
+    }
+  }
+  XL <- X1_impute[seq(1,(niter-burnin),100),]
+  return(list(gamma = GAMMA,alpha = ALPHA,MI_data = XL, acceptRatio = X1_accepted/niter))
+}
+
+doGibbsANWCPoisson<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = alpha_s, gamma = gamma_s, pop_mean = pop_mean_HT, pop_sd = pop_sd_HT){
+  X1 <- sub_dat$X1
+  W <- sub_dat$W
+  Rx <- sub_dat$Rx
+  Y <- sub_dat$Y
+  pbeta <- 1/sub_dat$W
+  n_mis <- sum(sub_dat$Rx == 1)
+  m_X1 <- glm(X1~Y,data = sub_dat[which(Rx ==0),],family=binomial(probit))
+  p_X1 <- predict(m_X1,newdata = data.frame(Y=Y[which(Rx == 1)]),type = "response")
+  X1[which(Rx == 1)] <- rbinom(n_mis,1,prob = p_X1)
+  
+  b0_alpha <- alpha; b0_alpha[] <- 0
+  sigma0_alpha <- diag(alpha); diag(sigma0_alpha) <- 1
+  b0_gamma <- gamma; b0_gamma[] <- 0
+  sigma0_gamma <- diag(gamma); diag(sigma0_gamma) <- 1
+  
+  alpha <- t(alpha_s)
+  gamma <- t(gamma_s)
+  
+  X1_accepted = 0
+  
+  GAMMA <- matrix(NA,niter-burnin,length(gamma))
+  ALPHA <- matrix(NA,niter-burnin,length(alpha))
+  X1_impute <- matrix(NA,niter-burnin,length(sub_dat$X1))
+  
+  # prior on thetat
+  theta0 <- c(1,1,1)
+  
+  for (i in 1:niter){
+    # update alpha, with data augumentation
+    # update Z|X,alpha
+    Y_mat <- model.matrix(X1~as.factor(Y)+pbeta)
+    Z <- X1
+    Z_mean <- Y_mat%*%t(alpha)
+    Z_mean_n <- Z_mean[which(X1==0)]
+    Z_mean_p <- Z_mean[which(X1==1)]
+    U_X1 <- Z_mean; U_X1[] <- 0
+    U_X1[X1==0] <- runif(sum(X1==0),pnorm(-Inf-Z_mean_n),pnorm(0-Z_mean_n))
+    U_X1[X1==1] <- runif(sum(X1==1),pnorm(0-Z_mean_p),pnorm(Inf-Z_mean_p))
+    Z <- Z_mean + qnorm(U_X1)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_alpha) + t(Y_mat)%*%Y_mat)
+    alpha_hat <- sigma_hat%*%(t(Y_mat)%*%Z + solve(sigma0_alpha)%*%b0_alpha)
+    alpha <- rmvnorm(1, mean = alpha_hat, sigma = sigma_hat)
+    
+    # update gamma
+    # update G|Rx, gamma
+    YX_mat <- model.matrix(Rx~as.factor(Y)+X1)
+    G <- Rx
+    # G_mean <- gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3)
+    G_mean <- YX_mat%*%t(gamma)
+    G_mean_n <- G_mean[which(Rx==0)]
+    G_mean_p <- G_mean[which(Rx==1)]
+    U_Z <- G_mean; U_Z[] <- 0
+    U_Z[Rx==0] <- runif(sum(Rx==0),pnorm(-Inf-G_mean_n),pnorm(0-G_mean_n))
+    U_Z[Rx==1] <- runif(sum(Rx==1),pnorm(0-G_mean_p),pnorm(Inf-G_mean_p))
+    G <- G_mean + qnorm(U_Z)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_gamma) + t(YX_mat)%*%YX_mat)
+    gamma_hat <- sigma_hat%*%(t(YX_mat)%*%G + solve(sigma0_gamma)%*%b0_gamma)
+    gamma <- rmvnorm(1, mean = gamma_hat, sigma = sigma_hat)
+    
+    # for Rx = 1, sample X1_mis*
+    pr_X1_miss <- matrix(0,ncol=2,nrow=n_mis)
+    colnames(pr_X1_miss) <- c("0","1")
+    # pi_x1 <- pnorm(0,alpha[1] + alpha[2]*(Y == 2) + alpha[3]*(Y==3),1) 
+    pi_x1 <- pnorm(0,Y_mat %*% t(alpha),1) 
+    YX_matX0 <-  YX_matX1 <- YX_mat
+    YX_matX0[,"X1"] <- rep(0,dim(YX_mat)[1])
+    YX_matX1[,"X1"] <- rep(1,dim(YX_mat)[1])
+    #pi_Rx_temp0 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3),1)
+    #pi_Rx_temp1 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3) + gamma[4],1)
+    pi_Rx_temp0 <- dnorm(G,YX_matX0%*%t(gamma),1)
+    pi_Rx_temp1<- dnorm(G,YX_matX1%*%t(gamma),1)
+    pr_X1_miss[,"0"] <- (pi_Rx_temp0*pi_x1)[which(Rx==1)]
+    pr_X1_miss[,"1"] <- (pi_Rx_temp1*(1-pi_x1))[which(Rx==1)]
+    pr_X1_miss <- pr_X1_miss/matrix(rowSums(pr_X1_miss),ncol=2,nrow=n_mis)
+    Ran_unif_X1_miss <- runif(nrow(pr_X1_miss))
+    cumul_X1_miss <- pr_X1_miss%*%upper.tri(diag(ncol(pr_X1_miss)),diag=TRUE)
+    
+    proposed_X1 <- X1
+    proposed_X1[which(Rx==1)] <- rowSums(Ran_unif_X1_miss>cumul_X1_miss)
+    
+    # M-H step
+    cur_mean <- sum(X1*W)
+    proposed_mean <- sum(proposed_X1*W)
+    log.r1 = dnorm(proposed_mean,mean = pop_mean,sd = pop_sd,log = TRUE) -  dnorm(cur_mean,mean = pop_mean,sd = pop_sd, log = TRUE)
+    if(log(runif(1))< log.r1){
+    X1 <- proposed_X1
+    X1_accepted = X1_accepted + 1
+  }
+    
+    
+    if (i > burnin){
+      GAMMA[i-burnin,] <- gamma
+      ALPHA[i-burnin,] <- alpha
+      X1_impute[i-burnin,] <- X1
+    }
+  }
+  XL <- X1_impute[seq(1,(niter-burnin),100),]
+  return(list(gamma = GAMMA,alpha = ALPHA,MI_data = XL, acceptRatio = X1_accepted/niter))
+}
+
+doGibbsSwitchWCPoisson<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = alpha_s, gamma = gamma_s, pop_mean = pop_mean_HT, pop_sd = pop_sd_HT){
+  X1 <- sub_dat$X1
+  W <- sub_dat$W
+  Rx <- sub_dat$Rx
+  Y <- sub_dat$Y
+  pbeta <- 1/sub_dat$W
+  n_mis <- sum(sub_dat$Rx == 1)
+  m_X1 <- glm(X1~Y,data = sub_dat[which(Rx ==0),],family=binomial(probit))
+  p_X1 <- predict(m_X1,newdata = data.frame(Y=Y[which(Rx == 1)]),type = "response")
+  X1[which(Rx == 1)] <- rbinom(n_mis,1,prob = p_X1)
+  
+  b0_alpha <- alpha; b0_alpha[] <- 0
+  sigma0_alpha <- diag(alpha); diag(sigma0_alpha) <- 1
+  b0_gamma <- gamma; b0_gamma[] <- 0
+  sigma0_gamma <- diag(gamma); diag(sigma0_gamma) <- 1
+  
+  alpha <- t(alpha_s)
+  gamma <- t(gamma_s)
+  
+  X1_accepted = 0
+  
+  GAMMA <- matrix(NA,niter-burnin,length(gamma))
+  ALPHA <- matrix(NA,niter-burnin,length(alpha))
+  X1_impute <- matrix(NA,niter-burnin,length(sub_dat$X1))
+  
+  # prior on thetat
+  theta0 <- c(1,1,1)
+  
+  for (i in 1:niter){
+    # update alpha, with data augumentation
+    # update Z|X,alpha
+    Y_mat <- model.matrix(X1~as.factor(Y)+pbeta)
+    Z <- X1
+    Z_mean <- Y_mat%*%t(alpha)
+    Z_mean_n <- Z_mean[which(X1==0)]
+    Z_mean_p <- Z_mean[which(X1==1)]
+    U_X1 <- Z_mean; U_X1[] <- 0
+    U_X1[X1==0] <- runif(sum(X1==0),pnorm(-Inf-Z_mean_n),pnorm(0-Z_mean_n))
+    U_X1[X1==1] <- runif(sum(X1==1),pnorm(0-Z_mean_p),pnorm(Inf-Z_mean_p))
+    Z <- Z_mean + qnorm(U_X1)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_alpha) + t(Y_mat)%*%Y_mat)
+    alpha_hat <- sigma_hat%*%(t(Y_mat)%*%Z + solve(sigma0_alpha)%*%b0_alpha)
+    alpha <- rmvnorm(1, mean = alpha_hat, sigma = sigma_hat)
+    
+    # update gamma
+    # update G|Rx, gamma
+    YX_mat <- model.matrix(Rx~as.factor(Y)+X1)
+    G <- Rx
+    # G_mean <- gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3)
+    G_mean <- YX_mat%*%t(gamma)
+    G_mean_n <- G_mean[which(Rx==0)]
+    G_mean_p <- G_mean[which(Rx==1)]
+    U_Z <- G_mean; U_Z[] <- 0
+    U_Z[Rx==0] <- runif(sum(Rx==0),pnorm(-Inf-G_mean_n),pnorm(0-G_mean_n))
+    U_Z[Rx==1] <- runif(sum(Rx==1),pnorm(0-G_mean_p),pnorm(Inf-G_mean_p))
+    G <- G_mean + qnorm(U_Z)
+    
+    # update alpha|Z,Y
+    sigma_hat <- solve(solve(sigma0_gamma) + t(YX_mat)%*%YX_mat)
+    gamma_hat <- sigma_hat%*%(t(YX_mat)%*%G + solve(sigma0_gamma)%*%b0_gamma)
+    gamma <- rmvnorm(1, mean = gamma_hat, sigma = sigma_hat)
+    
+    # for Rx = 1, sample X1_mis*
+    pr_X1_miss <- matrix(0,ncol=2,nrow=n_mis)
+    colnames(pr_X1_miss) <- c("0","1")
+    # pi_x1 <- pnorm(0,alpha[1] + alpha[2]*(Y == 2) + alpha[3]*(Y==3),1) 
+    pi_x1 <- pnorm(0,Y_mat %*% t(alpha),1) 
+    YX_matX0 <-  YX_matX1 <- YX_mat
+    YX_matX0[,"X1"] <- rep(0,dim(YX_mat)[1])
+    YX_matX1[,"X1"] <- rep(1,dim(YX_mat)[1])
+    #pi_Rx_temp0 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3),1)
+    #pi_Rx_temp1 <- dnorm(G,gamma[1] + gamma[2]*(Y==2) + gamma[3]*(Y==3) + gamma[4],1)
+    pi_Rx_temp0 <- dnorm(G,YX_matX0%*%t(gamma),1)
+    pi_Rx_temp1<- dnorm(G,YX_matX1%*%t(gamma),1)
+    pr_X1_miss[,"0"] <- (pi_Rx_temp0*pi_x1)[which(Rx==1)]
+    pr_X1_miss[,"1"] <- (pi_Rx_temp1*(1-pi_x1))[which(Rx==1)]
+    pr_X1_miss <- pr_X1_miss/matrix(rowSums(pr_X1_miss),ncol=2,nrow=n_mis)
+    Ran_unif_X1_miss <- runif(nrow(pr_X1_miss))
+    cumul_X1_miss <- pr_X1_miss%*%upper.tri(diag(ncol(pr_X1_miss)),diag=TRUE)
+    
+    # for Rx = 1, sample X1_mis*
+    proposed_X1 <- X1
+    proposed_X1[sample(which(Rx == 1),1)] <- 1 - proposed_X1[sample(which(Rx == 1),1)]
+    
+    # M-H step
+    cur_mean <- sum(X1*W)
+    proposed_mean <- sum(proposed_X1*W)
+    log.r1 = dnorm(proposed_mean,mean = pop_mean,sd = pop_sd,log = TRUE) -  dnorm(cur_mean,mean = pop_mean,sd = pop_sd, log = TRUE)
+    if(log(runif(1))< log.r1){
+      X1 <- proposed_X1
+      X1_accepted = X1_accepted + 1
+    }
+    
+    
+    if (i > burnin){
+      GAMMA[i-burnin,] <- gamma
+      ALPHA[i-burnin,] <- alpha
+      X1_impute[i-burnin,] <- X1
+    }
+  }
+  XL <- X1_impute[seq(1,(niter-burnin),100),]
+  return(list(gamma = GAMMA,alpha = ALPHA,MI_data = XL, acceptRatio = X1_accepted/niter))
+}
+getResults <- function(dataMI,alpha_len, gamma_len,sub_dat){
   n <- dim(dataMI)[1]
-  ans <- matrix(NA,n,3)
+  ans <- matrix(NA,n,alpha_len)
   for (i in 1:n){
-    str <- c(rep(1,n1),rep(2,n2))
     test_dat <- as.data.frame(cbind(dataMI[i,],rownames(sub_dat),sub_dat$W,sub_dat$Y),stringsAsFactors = FALSE)
     names(test_dat) <- c("X1","id","W","Y")
     test_dat$X1 <- as.factor(test_dat$X1)
@@ -681,7 +1032,7 @@ getResults <- function(dataMI, n1 = 1500, n2 = 3500,sub_dat){
   # 0.5,-0.5,-1
   
   # calculate gamma using stats package
-  ans_g <- matrix(NA,n,4)
+  ans_g <- matrix(NA,n,gamma_len)
   for (i in 1:n){
     test_dat <- as.data.frame(cbind(dataMI[i,],rownames(sub_dat),sub_dat$W,sub_dat$Y,sub_dat$Rx),stringsAsFactors = FALSE)
     names(test_dat) <- c("X1","id","W","Y","Rx")
