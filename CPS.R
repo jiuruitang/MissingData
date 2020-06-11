@@ -1,6 +1,7 @@
 # use CPS2012 data weights to generate X and Y
 # created: 01/20
 # modified: 
+load("~/Missing/cps2012.rda")
 weights <- dat12$HWHHWGT/10000
 # there are some zero weights entries (vacant)
 nonzero_W <- weights[which(weights != 0)]
