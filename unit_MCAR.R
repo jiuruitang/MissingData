@@ -82,14 +82,6 @@ ANWC_unit_full<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = al
   Y_impute <- matrix(NA,niter-burnin,length(sub_dat$Y))
   # Rx_impute <- matrix(NA,niter-burnin,length(sub_dat$Rx))
   
-  #GAMMA <- matrix(NA,niter,length(gamma))
-  #ALPHA <- matrix(NA,niter,length(alpha))
-  #BETA <- matrix(NA,niter,length(beta_Y))
-  
-  
-  
-  # prior on thetat
-  theta0 <- c(1,1,1)
   
   for (i in 1:niter){
     # update alpha, with data augumentation
@@ -169,6 +161,7 @@ ANWC_unit_full<-function(niter = 10000,burnin = 5000, data = sub_dat, alpha = al
     p_X1 <- pnorm(model.matrix(X1~as.factor(Y)+pbeta)%*%t(alpha))
     X1[which(U == 1)] <- rbinom(n_unit,1,prob = p_X1[which(U == 1)])
     
+    # Use margin of X
     proposed_X1 <- X1
     proposed_X1[which(sub_dat[which(U==0),]$Rx == 1)] <- rowSums(Ran_unif_X1_miss>cumul_X1_miss)
     
